@@ -5,6 +5,6 @@ test: chibicc
 	./test.sh
 
 clean:
-	rm -f chibicc
+	rm -f chibicc tmp*
 
 .PHONY: test clean 
