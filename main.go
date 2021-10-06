@@ -3,7 +3,6 @@ package main
 import (
 	"flag"
 	"fmt"
-	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -11,30 +10,22 @@ import (
 )
 
 // 戻り値の第二引数は数値として読み込んだruneの数
-func strtol(p io.RuneReader) (int, error) {
+func strtol(r *[]rune) (int, error) {
 	var numString strings.Builder
-	for {
-		ch, _, err := p.ReadRune()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return 0, err
-		}
-		if unicode.IsDigit(ch) {
-			_, err := numString.WriteRune(ch)
-			if err != nil {
+	c := *r
+	for len(c) > 0 {
+		if unicode.IsDigit(c[0]) {
+			if _, err := numString.WriteRune(c[0]); err != nil {
 				return 0, err
 			}
+			c = c[1:]
 			continue
 		}
+
 		break
 	}
-	num, err := strconv.Atoi(numString.String())
-	if err != nil {
-		return num, nil
-	}
-	return num, nil
+	*r = c
+	return strconv.Atoi(numString.String())
 }
 
 func main() {
@@ -44,9 +35,8 @@ func main() {
 		fmt.Fprintf(os.Stderr, "%s: invalid number of arguments\n", os.Args[0])
 		os.Exit(1)
 	}
-	p := flag.Arg(0)
-	reader := strings.NewReader(p)
-	numString, err := strtol(reader)
+	reader := []rune(flag.Arg(0))
+	numString, err := strtol(&reader)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%s\n", err)
 		os.Exit(1)
@@ -54,35 +44,29 @@ func main() {
 	fmt.Print("	.global main\n")
 	fmt.Print("main:\n")
 	fmt.Printf("	mov $%d, %%rax\n", numString)
-	for {
-		ch, _, err := reader.ReadRune()
-		if err == io.EOF {
-			break
-		} else if err != nil {
-			fmt.Fprintf(os.Stderr, "%s\n", err)
-			os.Exit(1)
-		}
-		if ch == '+' {
-			i, err := strtol(reader)
+	for len(reader) > 0 {
+		char := reader[0]
+		reader = reader[1:]
+		if char == '+' {
+			num, err := strtol(&reader)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "%s\n", err)
 				os.Exit(1)
 			}
-			fmt.Printf("	add $%d, %%rax\n", i)
+			fmt.Printf("	add $%d, %%rax\n", num)
 			continue
-		}
-		if ch == '-' {
-			i, err := strtol(reader)
+		} else if char == '-' {
+			i, err := strtol(&reader)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "%s\n", err)
 				os.Exit(1)
 			}
 			fmt.Printf("	sub $%d, %%rax\n", i)
 			continue
+		} else {
+			fmt.Fprintf(os.Stderr, "unexpected character: '%c'\n", char)
+			os.Exit(1)
 		}
-
-		fmt.Fprintf(os.Stderr, "unexpected character: '%c'\n", ch)
-		os.Exit(1)
 	}
 	fmt.Print("	ret\n")
 }
