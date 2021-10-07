@@ -3,7 +3,6 @@ package main
 import (
 	"flag"
 	"fmt"
-	"log"
 	"os"
 	"strconv"
 	"strings"
@@ -53,7 +52,7 @@ func tokenize(str []rune) *token {
 			continue
 		}
 
-		log.Fatalln("トークナイズできません")
+		errorAt(cur.str, "トークナイズできません")
 	}
 
 	newToken(TOKEN_KIND_EOF, cur, str)
@@ -62,7 +61,7 @@ func tokenize(str []rune) *token {
 
 func (t *token) expectNumber() int {
 	if t.kind != TOKEN_KIND_NUM {
-		log.Fatalln("数値ではありません")
+		errorAt(t.str, "数値ではありません")
 	}
 	val := t.val
 	*t = *t.next
@@ -81,7 +80,7 @@ func (t *token) consume(r rune) bool {
 
 func (t *token) expect(r rune) {
 	if t.kind != TOKEN_KIND_RESERVED || t.str[0] != r {
-		log.Fatalf("'%#U'ではありません, '%#U'\n", r, t.str[0])
+		errorAt(t.str, "'%#U'ではありません, '%#U'\n", r, t.str[0])
 	}
 	*t = *t.next
 }
@@ -109,6 +108,18 @@ func strtol(r *[]rune) (int, error) {
 	return strconv.Atoi(numString.String())
 }
 
+var userInput string
+
+func errorAt(loc []rune, str string, form ...interface{}) {
+	pos := len(userInput) - len(loc)
+	fmt.Fprintf(os.Stderr, "%s\n", userInput)
+	fmt.Fprintf(os.Stderr, "%*s", pos, " ")
+	fmt.Fprint(os.Stderr, "^ ")
+	fmt.Fprintf(os.Stderr, str, form...)
+	fmt.Fprintln(os.Stderr)
+	os.Exit(1)
+}
+
 func main() {
 	flag.Parse()
 
@@ -117,7 +128,9 @@ func main() {
 		os.Exit(1)
 	}
 
-	t := tokenize([]rune(flag.Arg(0)))
+	userInput = flag.Arg(0)
+
+	t := tokenize([]rune(userInput))
 
 	//fmt.Print(".intel_syntax noprefix\n")
 	fmt.Print("	.global main\n")
