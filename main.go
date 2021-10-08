@@ -15,6 +15,63 @@ const (
 	TOKEN_KIND_EOF             // 入力の終了を示すトークン
 )
 
+const (
+	NODE_KIND_ADD = iota
+	NODE_KIND_SUB
+	NODE_KIND_MUL
+	NODE_KIND_DIV
+	NODE_KIND_NUM
+)
+
+type node struct {
+	nodeKind int
+	lhs      *node
+	rhs      *node
+	val      int
+}
+
+func newNode(nodeKind int, lhs *node, rhs *node) *node {
+	return &node{
+		nodeKind: nodeKind,
+		lhs:      lhs,
+		rhs:      rhs,
+	}
+}
+
+func newNodeNum(val int) *node {
+	return &node{
+		nodeKind: NODE_KIND_NUM,
+		val:      val,
+	}
+}
+
+func (n *node) gen() {
+	if n.nodeKind == NODE_KIND_NUM {
+		fmt.Printf("	push %d\n", n.val)
+		return
+	}
+
+	n.lhs.gen()
+	n.rhs.gen()
+
+	fmt.Printf("	pop rdi\n")
+	fmt.Printf("	pop rax\n")
+
+	switch n.nodeKind {
+	case NODE_KIND_ADD:
+		fmt.Printf("	add rax, rdi\n")
+	case NODE_KIND_SUB:
+		fmt.Printf("	sub rax, rdi\n")
+	case NODE_KIND_MUL:
+		fmt.Printf("	imul rax, rdi\n")
+	case NODE_KIND_DIV:
+		fmt.Printf("	cqo\n")
+		fmt.Printf("	idiv rdi\n")
+	}
+
+	fmt.Printf("	push rax\n")
+}
+
 type token struct {
 	kind int
 	next *token
@@ -41,7 +98,7 @@ func tokenize(str []rune) *token {
 			str = str[1:]
 			continue
 		}
-		if c == '-' || c == '+' {
+		if c == '-' || c == '+' || c == '*' || c == '/' || c == '(' || c == ')' {
 			str = str[1:]
 			cur = newToken(TOKEN_KIND_RESERVED, cur, []rune{c})
 			continue
@@ -57,6 +114,56 @@ func tokenize(str []rune) *token {
 
 	newToken(TOKEN_KIND_EOF, cur, str)
 	return head.next
+}
+
+func (t *token) expr() *node {
+	n := t.mul()
+
+	for {
+		if t.consume('+') {
+			n = newNode(NODE_KIND_ADD, n, t.mul())
+		} else if t.consume('-') {
+			n = newNode(NODE_KIND_SUB, n, t.mul())
+		} else {
+			return n
+		}
+	}
+}
+
+func (t *token) mul() *node {
+	n := t.unary()
+
+	for {
+		if t.consume('*') {
+			n = newNode(NODE_KIND_MUL, n, t.unary())
+		} else if t.consume('/') {
+			n = newNode(NODE_KIND_DIV, n, t.unary())
+		} else {
+			return n
+		}
+	}
+}
+
+func (t *token) unary() *node {
+	if t.consume('+') {
+		return t.expr()
+	}
+	if t.consume('-') {
+		return newNode(NODE_KIND_SUB, newNodeNum(0), t.primary())
+	}
+	return t.primary()
+}
+
+func (t *token) primary() *node {
+	// 次のトークンが"("なら"("+expr+")"のはず
+	if t.consume('(') {
+		n := t.expr()
+		t.expect(')')
+		return n
+	}
+
+	// そうでなければ通知のはず
+	return newNodeNum(t.expectNumber())
 }
 
 func (t *token) expectNumber() int {
@@ -129,22 +236,15 @@ func main() {
 	}
 
 	userInput = flag.Arg(0)
-
 	t := tokenize([]rune(userInput))
+	n := t.expr()
 
-	//fmt.Print(".intel_syntax noprefix\n")
+	fmt.Print(".intel_syntax noprefix\n")
 	fmt.Print("	.global main\n")
 	fmt.Print("main:\n")
 
-	fmt.Printf("	mov $%d, %%rax\n", t.expectNumber())
+	n.gen()
 
-	for !t.atEOF() {
-		if t.consume('+') {
-			fmt.Printf("	add $%d, %%rax\n", t.expectNumber())
-			continue
-		}
-		t.expect('-')
-		fmt.Printf("	sub $%d, %%rax\n", t.expectNumber())
-	}
+	fmt.Print("	pop rax\n")
 	fmt.Print("	ret\n")
 }
