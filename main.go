@@ -52,7 +52,7 @@ func tokenize(str []rune) *token {
 			continue
 		}
 
-		errorAt(cur.str, "トークナイズできません")
+		errorAt(str, "トークナイズできません")
 	}
 
 	newToken(TOKEN_KIND_EOF, cur, str)
