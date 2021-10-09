@@ -21,6 +21,10 @@ const (
 	NODE_KIND_MUL
 	NODE_KIND_DIV
 	NODE_KIND_NUM
+	NODE_KIND_EQ
+	NODE_KIND_NE
+	NODE_KIND_LT
+	NODE_KIND_LE
 )
 
 type node struct {
@@ -67,22 +71,40 @@ func (n *node) gen() {
 	case NODE_KIND_DIV:
 		fmt.Printf("	cqo\n")
 		fmt.Printf("	idiv rdi\n")
+	case NODE_KIND_EQ:
+		fmt.Printf("	cmp rax, rdi\n")
+		fmt.Printf("	sete al\n")
+		fmt.Printf("	movzb rax, al\n")
+	case NODE_KIND_NE:
+		fmt.Printf("	cmp rax, rdi\n")
+		fmt.Printf("	setne al\n")
+		fmt.Printf("	movzb rax, al\n")
+	case NODE_KIND_LT:
+		fmt.Printf("	cmp rax, rdi\n")
+		fmt.Printf("	setl al\n")
+		fmt.Printf("	movzb rax, al\n")
+	case NODE_KIND_LE:
+		fmt.Printf("	cmp rax, rdi\n")
+		fmt.Printf("	setle al\n")
+		fmt.Printf("	movzb rax, al\n")
 	}
 
 	fmt.Printf("	push rax\n")
 }
 
 type token struct {
-	kind int
-	next *token
-	val  int
-	str  []rune
+	kind   int
+	next   *token
+	val    int
+	str    []rune
+	length int
 }
 
-func newToken(kind int, cur *token, str []rune) *token {
+func newToken(kind int, cur *token, str []rune, length int) *token {
 	t := &token{
-		kind: kind,
-		str:  str,
+		kind:   kind,
+		str:    str,
+		length: length,
 	}
 	cur.next = t
 	return t
@@ -98,31 +120,75 @@ func tokenize(str []rune) *token {
 			str = str[1:]
 			continue
 		}
-		if c == '-' || c == '+' || c == '*' || c == '/' || c == '(' || c == ')' {
+		if strings.HasPrefix(string(str), "==") || strings.HasPrefix(string(str), "!=") ||
+			strings.HasPrefix(string(str), "<=") || strings.HasPrefix(string(str), ">=") {
+			cur = newToken(TOKEN_KIND_RESERVED, cur, str, 2)
+			str = str[2:]
+			continue
+		}
+		if strings.ContainsAny(string(c), "-+*/()<>") {
 			str = str[1:]
-			cur = newToken(TOKEN_KIND_RESERVED, cur, []rune{c})
+			cur = newToken(TOKEN_KIND_RESERVED, cur, []rune{c}, 1)
 			continue
 		}
 		if unicode.IsDigit(c) {
-			cur = newToken(TOKEN_KIND_NUM, cur, str)
+			cur = newToken(TOKEN_KIND_NUM, cur, str, 0)
+			tmp := str
 			cur.val, _ = strtol(&str)
+			cur.length = len(tmp) - (len(tmp) - len(str))
 			continue
 		}
 
 		errorAt(str, "トークナイズできません")
 	}
 
-	newToken(TOKEN_KIND_EOF, cur, str)
+	newToken(TOKEN_KIND_EOF, cur, str, 0)
 	return head.next
 }
 
 func (t *token) expr() *node {
+	return t.equality()
+}
+
+func (t *token) equality() *node {
+	n := t.relational()
+
+	for {
+		if t.consume("==") {
+			n = newNode(NODE_KIND_EQ, n, t.relational())
+		} else if t.consume("!=") {
+			n = newNode(NODE_KIND_NE, n, t.relational())
+		} else {
+			return n
+		}
+	}
+}
+
+func (t *token) relational() *node {
+	n := t.add()
+
+	for {
+		if t.consume("<") {
+			n = newNode(NODE_KIND_LT, n, t.add())
+		} else if t.consume("<=") {
+			n = newNode(NODE_KIND_LE, n, t.add())
+		} else if t.consume(">") {
+			n = newNode(NODE_KIND_LT, t.add(), n)
+		} else if t.consume(">=") {
+			n = newNode(NODE_KIND_LE, t.add(), n)
+		} else {
+			return n
+		}
+	}
+}
+
+func (t *token) add() *node {
 	n := t.mul()
 
 	for {
-		if t.consume('+') {
+		if t.consume("+") {
 			n = newNode(NODE_KIND_ADD, n, t.mul())
-		} else if t.consume('-') {
+		} else if t.consume("-") {
 			n = newNode(NODE_KIND_SUB, n, t.mul())
 		} else {
 			return n
@@ -134,9 +200,9 @@ func (t *token) mul() *node {
 	n := t.unary()
 
 	for {
-		if t.consume('*') {
+		if t.consume("*") {
 			n = newNode(NODE_KIND_MUL, n, t.unary())
-		} else if t.consume('/') {
+		} else if t.consume("/") {
 			n = newNode(NODE_KIND_DIV, n, t.unary())
 		} else {
 			return n
@@ -145,20 +211,20 @@ func (t *token) mul() *node {
 }
 
 func (t *token) unary() *node {
-	if t.consume('+') {
-		return t.expr()
+	if t.consume("+") {
+		return t.unary()
 	}
-	if t.consume('-') {
-		return newNode(NODE_KIND_SUB, newNodeNum(0), t.primary())
+	if t.consume("-") {
+		return newNode(NODE_KIND_SUB, newNodeNum(0), t.unary())
 	}
 	return t.primary()
 }
 
 func (t *token) primary() *node {
 	// 次のトークンが"("なら"("+expr+")"のはず
-	if t.consume('(') {
+	if t.consume("(") {
 		n := t.expr()
-		t.expect(')')
+		t.expect(")")
 		return n
 	}
 
@@ -177,17 +243,17 @@ func (t *token) expectNumber() int {
 
 // 次のトークンが期待している記号の時はトークンを一つ進めて
 // 真を返す。それ以外の場合には偽を返す
-func (t *token) consume(r rune) bool {
-	if t.kind != TOKEN_KIND_RESERVED || t.str[0] != r {
+func (t *token) consume(r string) bool {
+	if t.kind != TOKEN_KIND_RESERVED || strings.Compare(string(t.str[:t.length]), string(r)) != 0 {
 		return false
 	}
 	*t = *t.next
 	return true
 }
 
-func (t *token) expect(r rune) {
-	if t.kind != TOKEN_KIND_RESERVED || t.str[0] != r {
-		errorAt(t.str, "'%#U'ではありません, '%#U'\n", r, t.str[0])
+func (t *token) expect(r string) {
+	if t.kind != TOKEN_KIND_RESERVED || strings.Compare(string(t.str), string(r)) != 0 {
+		errorAt(t.str, "'%s'ではありません, '%s'\n", r, string(t.str))
 	}
 	*t = *t.next
 }
